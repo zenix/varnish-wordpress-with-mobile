@@ -85,8 +85,8 @@ sub vcl_recv {
 	}
 	
 	/* Don't cache cookies for admin site */
-	if (!(req.url ~ "wp-(login|admin)") &&
-		!(req.url ~ "&preview=true" ) ) {
+	if ((req.url ~ "wp-(login|admin)") &&
+		(req.url ~ "&preview=true" ) ) {
 		return (pass);
 	}
  
