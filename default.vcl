@@ -87,7 +87,7 @@ sub vcl_recv {
 	/* Don't cache cookies for admin site */
 	if (!(req.url ~ "wp-(login|admin)") &&
 		!(req.url ~ "&preview=true" ) ) {
-		unset req.http.cookie;
+		return (pass);
 	}
  
 	/* Pass authenticated request without cachin*/
