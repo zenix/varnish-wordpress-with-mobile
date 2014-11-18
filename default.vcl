@@ -27,14 +27,27 @@
 # Author: Jari Timonen <jari.timonen@zeniitti.net>
 
 vcl 4.0;
+import std;
 /* iclude device detection */
 include "devicedetect.vcl";
 sub vcl_recv { call devicedetect; }
 
 /* This is your HTTP Server address and port */
-backend default {
+backend server1 {
     .host = "127.0.0.1";
     .port = "8080";
+	.probe = {
+		/* What url to check against */
+        .url = "/";
+		/* Timeout for how long to wait back end to answer */
+        .timeout = 2s;
+		/* How often to check.  */
+        .interval = 10s;
+		/* How many is the max value for checks */
+        .window = 5;
+		/* If 3 out of 5 succeed consider healthy, otherwise mark as sick */
+        .threshold = 3;
+     }
 }
 	
 sub vcl_recv {
@@ -84,11 +97,41 @@ sub vcl_recv {
 		return (pass);
 	}
 	
+	/* Normalize Accept-Encoding header */
+	if (req.http.Accept-Encoding) {
+		/* No need to compress these */
+		if (req.url ~ "\.(jpg|png|gif|gz|tgz|bz2|mp3|mp4|m4v)(\?.*|)$") {
+			unset req.http.Accept-Encoding;
+		} elsif (req.http.Accept-Encoding ~ "gzip") {
+			set req.http.Accept-Encoding = "gzip";
+		} elsif (req.http.Accept-Encoding ~ "deflate") {
+			set req.http.Accept-Encoding = "deflate";
+		} else {
+			unset req.http.Accept-Encoding;
+		}
+	}
+	
 	/* Don't cache cookies for admin site */
 	if ((req.url ~ "wp-(login|admin)") &&
 		(req.url ~ "&preview=true" ) ) {
 		return (pass);
 	}
+	
+	/* if logged in, pass, otherwise remove cookie */
+	if (req.http.cookie) {
+		if (req.http.cookie ~ "(wordpress_logged_in)") {
+				return(pass);
+		} else {
+				unset req.http.cookie;
+		}
+	}
+
+	/* Don't cache seach results */
+	if( req.url ~ "\?s=" ){
+		return (pass);
+	}
+
+
  
 	/* Pass authenticated request without cachin*/
 	if (req.http.Authorization || req.http.Cookie) {
@@ -101,7 +144,14 @@ sub vcl_recv {
 
 /* Deliver cached content */
 sub vcl_hit {
-    return (deliver);
+   if (obj.ttl >= 0s) {
+       return (deliver);
+   }
+   if (!std.healthy(req.backend_hint) && (obj.ttl + obj.grace > 0s)) {
+      return (deliver);
+   }
+ 
+   return (fetch);
 }
  
 /* If content is not in cache, fetch from backend */
@@ -110,6 +160,8 @@ sub vcl_miss {
 }
  
 sub vcl_backend_response {
+	/* Keep all objects 2minutes beyond their TTL */
+	 set beresp.grace = 2m;
 	
 	/* Vary the content based on different devices. */
     if (bereq.http.X-UA-Device) {
